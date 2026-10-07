@@ -12,6 +12,7 @@ import '../../../core/widgets/subtask_tile.dart';
 import '../../../data/task_actions.dart';
 import '../../../domain/models/task_item.dart';
 import '../timer/timer_controller.dart';
+import 'pending_delete_controller.dart';
 import 'task_form_sheet.dart';
 
 /// Detail content for one task (below the loading/error/not-found shell).
@@ -32,6 +33,55 @@ class TaskDetailBody extends ConsumerWidget {
   final void Function(int oldIndex, int newIndex) onReorder;
   final VoidCallback onDelete;
   final Future<void> Function(Future<void> Function() op) onRun;
+
+  void _showRenameDialog(
+      BuildContext context, WidgetRef ref, Subtask subtask) {
+    final TextEditingController controller =
+        TextEditingController(text: subtask.title);
+    showDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('Rename subtask'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLength: 120,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(hintText: 'Subtask title'),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final String newTitle = controller.text.trim();
+                if (newTitle.isEmpty) {
+                  return;
+                }
+                Navigator.of(dialogContext).pop();
+                try {
+                  await ref.read(taskActionsProvider).updateSubtask(
+                        task.id,
+                        subtask.copyWith(title: newTitle),
+                      );
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(e.toString())),
+                    );
+                  }
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -136,27 +186,52 @@ class TaskDetailBody extends ConsumerWidget {
                   onReorderItem: onReorder,
                   itemBuilder: (BuildContext context, int index) {
                     final Subtask subtask = task.subtasks[index];
-                    return SubtaskTile(
-                      key: ValueKey<String>(subtask.id),
-                      subtask: subtask,
-                      dragIndex: index,
-                      onToggled: (_) => onRun(
-                        () => actions.toggleSubtask(task, subtask.id),
+                    return Dismissible(
+                      key: ValueKey<String>('dismiss_${subtask.id}'),
+                      direction: DismissDirection.endToStart,
+                      background: Container(
+                        color: Theme.of(context).colorScheme.error,
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.only(right: AppSpace.x4),
+                        child: const Icon(
+                          Icons.delete_outline,
+                          color: Colors.white,
+                        ),
                       ),
-                      onPlay: () {
+                      onDismissed: (_) {
                         ref
-                            .read(timerControllerProvider.notifier)
-                            .start(task: task, subtask: subtask);
-                        context.push(
-                          Uri(
-                            path: '/timer',
-                            queryParameters: <String, String>{
-                              'taskId': task.id,
-                              'subtaskId': subtask.id,
-                            },
-                          ).toString(),
-                        );
+                            .read(pendingDeleteControllerProvider.notifier)
+                            .stageSubtaskDelete(
+                              context: context,
+                              ref: ref,
+                              taskId: task.id,
+                              subtaskId: subtask.id,
+                            );
                       },
+                      child: SubtaskTile(
+                        key: ValueKey<String>(subtask.id),
+                        subtask: subtask,
+                        dragIndex: index,
+                        onToggled: (_) => onRun(
+                          () => actions.toggleSubtask(task, subtask.id),
+                        ),
+                        onTitleTap: () =>
+                            _showRenameDialog(context, ref, subtask),
+                        onPlay: () {
+                          ref
+                              .read(timerControllerProvider.notifier)
+                              .start(task: task, subtask: subtask);
+                          context.push(
+                            Uri(
+                              path: '/timer',
+                              queryParameters: <String, String>{
+                                'taskId': task.id,
+                                'subtaskId': subtask.id,
+                              },
+                            ).toString(),
+                          );
+                        },
+                      ),
                     );
                   },
                 ),

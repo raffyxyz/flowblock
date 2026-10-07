@@ -269,3 +269,36 @@ ported to `test/data/repositories/drift_task_repository_test.dart`
 (repository-backed) and now run against SQLite. New tests: date-filter
 units, provider-override emission, atomicity (duplicate subtask ids roll
 back the whole update).
+
+## Step 4: Task and subtask behavior gaps
+
+Completed Step 4 task and subtask identity, bulk completion, deferred deletes with lossless undo, and input validation.
+
+### Edit sheet subtask identity
+
+Subtask identity in the edit sheet no longer relies on title matching. Each subtask row (`SubtaskDraft`) carries its real database ID (`id == null` for newly added rows). When saving an edit, `updateTaskWithSubtasks` atomically updates subtasks by ID (preserving ID, done state, completedAt, and createdAt when renamed), inserts new rows, deletes removed IDs, rewrites `sortOrder` as `0..n-1`, and recomputes the parent state once inside the same transaction. Blank subtask rows are silently dropped on save.
+
+### Parent checkbox bulk-toggle
+
+Tapping a parent task's checkbox when it has subtasks uses `toggleTaskDone`:
+- If not all subtasks are done: marks all subtasks as done (parent becomes done, stamping `completedAt`).
+- If all subtasks are done: marks all subtasks as open (parent re-opens, clearing `completedAt`).
+- Tasks without subtasks toggle their own `isDone` state as before.
+- Bulk-completing subtasks automatically stops any placeholder timer currently running on a subtask of that task.
+
+### Deferred delete and lossless Undo
+
+Both task deletions and subtask deletions use a single shared helper (`PendingDeleteController`):
+- When a user deletes a task or subtask (via swipe or menu), the row is immediately hidden from the UI using transient pending-delete state so parent derived states, progress counters, and rolled-up estimates update instantly.
+- A `SnackBar` with an **Undo** action is shown. Tapping Undo clears the pending delete; no database write ever occurred, preserving IDs, done states, durations, and order losslessly.
+- If the SnackBar closes without Undo, or if the screen is disposed, or if the app enters `paused`/`inactive`/`detached` state, the delete is committed to the database immediately.
+- If a placeholder timer is running on a pending-deleted task or subtask, it is stopped at the exact moment the user initiates the deletion action.
+
+### Validation and limits
+
+Input limits are enforced both in the repository layer (throwing a typed `ValidationException`) and visually in the UI:
+- **Title**: Max 120 characters (character counter shown in sheet near limit). Blank titles are rejected.
+- **Notes**: Max 2000 characters (character counter shown in sheet near limit).
+- **Subtasks cap**: Max 50 subtasks per task (disables "Add subtask" button in sheet with an inline notice when 50 is reached).
+- **Duration**: 1 to 600 minutes (validated in repository and duration dialog).
+

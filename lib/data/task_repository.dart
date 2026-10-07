@@ -17,8 +17,10 @@ abstract class TaskRepository {
   Future<TaskItem?> getById(String id);
   Future<void> addTask(TaskItem draft);
   Future<void> updateTask(TaskItem task);
+  Future<void> updateTaskWithSubtasks(TaskItem task);
   Future<void> deleteTask(String id);
   Future<void> setTaskDone(String id, bool isDone);
+  Future<void> toggleTaskDone(String id);
   Future<void> setSubtaskDone(String taskId, String subtaskId, bool isDone);
   Future<void> addSubtask(
     String taskId, {

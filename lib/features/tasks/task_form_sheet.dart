@@ -8,6 +8,7 @@ import '../../core/widgets/section_header.dart';
 import '../../data/task_actions.dart';
 import '../../data/task_repository.dart';
 import '../../domain/models/task_item.dart';
+import '../../domain/validation_exception.dart';
 import '../settings/settings_providers.dart';
 import 'sheet/repeat_section.dart';
 import 'sheet/schedule_section.dart';
@@ -68,9 +69,11 @@ class _TaskFormSheetState extends ConsumerState<TaskFormSheet> {
       }
       _recurrence = existing.recurrence;
       _weekdays = Set<int>.from(existing.weekdays);
+
       for (final Subtask s in existing.subtasks) {
         _drafts.add(
           SubtaskDraft(
+            id: s.id,
             title: s.title,
             durationMinutes: s.durationMinutes,
             isDone: s.isDone,
@@ -151,8 +154,15 @@ class _TaskFormSheetState extends ConsumerState<TaskFormSheet> {
       if (existing == null) {
         await actions.addTask(task);
       } else {
-        await actions.updateTask(task);
+        await actions.updateTaskWithSubtasks(task);
       }
+    } on ValidationException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
+      return;
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -213,6 +223,7 @@ class _TaskFormSheetState extends ConsumerState<TaskFormSheet> {
             TextField(
               controller: _title,
               autofocus: true,
+              maxLength: 120,
               textCapitalization: TextCapitalization.sentences,
               onChanged: (_) {
                 if (_titleError != null) {
@@ -228,6 +239,7 @@ class _TaskFormSheetState extends ConsumerState<TaskFormSheet> {
             TextField(
               controller: _notes,
               maxLines: 3,
+              maxLength: 2000,
               textCapitalization: TextCapitalization.sentences,
               decoration: const InputDecoration(
                 labelText: 'Notes (optional)',
@@ -248,11 +260,21 @@ class _TaskFormSheetState extends ConsumerState<TaskFormSheet> {
                   _drafts.removeAt(i);
                 }),
               ),
-            TextButton.icon(
-              onPressed: () => setState(() => _drafts.add(SubtaskDraft())),
-              icon: const Icon(Icons.add),
-              label: const Text('Add subtask'),
-            ),
+            if (_drafts.length < 50)
+              TextButton.icon(
+                onPressed: () => setState(() => _drafts.add(SubtaskDraft())),
+                icon: const Icon(Icons.add),
+                label: const Text('Add subtask'),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: AppSpace.x2),
+                child: Text(
+                  'Maximum 50 subtasks reached',
+                  style: context.text.bodySmall
+                      ?.copyWith(color: context.colors.muted),
+                ),
+              ),
             const SizedBox(height: AppSpace.x4),
             ScheduleSection(
               date: _date,

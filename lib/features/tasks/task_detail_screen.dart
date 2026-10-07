@@ -7,6 +7,7 @@ import '../../../core/widgets/empty_state.dart';
 import '../../../data/task_actions.dart';
 import '../../../data/task_repository.dart';
 import '../../../domain/models/task_item.dart';
+import 'pending_delete_controller.dart';
 import 'task_detail_body.dart';
 import 'task_timer_guard.dart';
 
@@ -85,10 +86,14 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
     if (confirmed != true || !mounted) {
       return;
     }
-    await _run(() => ref.read(taskActionsProvider).deleteTask(task.id));
     if (mounted) {
       context.pop();
     }
+    ref.read(pendingDeleteControllerProvider.notifier).stageTaskDelete(
+      context: context,
+      ref: ref,
+      taskId: task.id,
+    );
   }
 
   void _reorder(TaskItem task, int oldIndex, int newIndex) {
@@ -102,9 +107,13 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(pendingDeleteControllerProvider);
     final AsyncValue<TaskItem?> task = ref.watch(taskProvider(widget.taskId));
     return task.when(
-      data: (TaskItem? t) {
+      data: (TaskItem? raw) {
+        final TaskItem? t = ref
+            .read(pendingDeleteControllerProvider.notifier)
+            .filterTask(raw);
         if (t == null) {
           return Scaffold(
             appBar: AppBar(),

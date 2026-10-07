@@ -12,6 +12,7 @@ class SubtaskTile extends StatelessWidget {
     super.key,
     required this.subtask,
     required this.onToggled,
+    this.onTitleTap,
     this.onPlay,
     this.dragIndex,
     this.highlighted = false,
@@ -19,6 +20,7 @@ class SubtaskTile extends StatelessWidget {
 
   final Subtask subtask;
   final ValueChanged<bool> onToggled;
+  final VoidCallback? onTitleTap;
   final VoidCallback? onPlay;
 
   /// When non-null, shows a drag handle wired to this list index.
@@ -43,12 +45,19 @@ class SubtaskTile extends StatelessWidget {
             onChanged: onToggled,
           ),
           Expanded(
-            child: Text(
-              subtask.title,
-              style: context.text.bodyLarge?.copyWith(
-                decoration:
-                    subtask.isDone ? TextDecoration.lineThrough : null,
-                color: subtask.isDone ? colors.muted : colors.heading,
+            child: InkWell(
+              onTap: onTitleTap,
+              borderRadius: BorderRadius.circular(AppRadius.small),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: AppSpace.x2),
+                child: Text(
+                  subtask.title,
+                  style: context.text.bodyLarge?.copyWith(
+                    decoration:
+                        subtask.isDone ? TextDecoration.lineThrough : null,
+                    color: subtask.isDone ? colors.muted : colors.heading,
+                  ),
+                ),
               ),
             ),
           ),

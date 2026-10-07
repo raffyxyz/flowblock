@@ -4,12 +4,18 @@ import '../../../core/theme/app_theme.dart';
 
 /// Editable subtask row model used by the task form sheet.
 class SubtaskDraft {
-  SubtaskDraft({String? title, this.durationMinutes, this.isDone = false}) {
+  SubtaskDraft({
+    this.id,
+    String? title,
+    this.durationMinutes,
+    this.isDone = false,
+  }) {
     if (title != null) {
       controller.text = title;
     }
   }
 
+  final String? id;
   final TextEditingController controller = TextEditingController();
   int? durationMinutes;
   bool isDone;

@@ -2,6 +2,7 @@ import 'package:drift/drift.dart';
 
 import '../../domain/models/task_item.dart';
 import '../../domain/task_filters.dart';
+import '../../domain/task_validator.dart';
 import '../db/daos/tasks_dao.dart';
 import '../db/database.dart' hide Subtask;
 import '../db/mappers.dart';
@@ -66,7 +67,8 @@ class DriftTaskRepository with RepositoryWrites implements TaskRepository {
   }
 
   @override
-  Future<void> addTask(TaskItem draft) {
+  Future<void> addTask(TaskItem draft) async {
+    validateTaskItem(draft);
     return db.transaction(() async {
       final DateTime moment = now;
       final Task? last =
@@ -120,7 +122,11 @@ class DriftTaskRepository with RepositoryWrites implements TaskRepository {
   }
 
   @override
-  Future<void> updateTask(TaskItem task) {
+  Future<void> updateTask(TaskItem task) => updateTaskWithSubtasks(task);
+
+  @override
+  Future<void> updateTaskWithSubtasks(TaskItem task) async {
+    validateTaskItem(task);
     return db.transaction(() async {
       final DateTime moment = now;
       final TaskWithSubtasks? current = await db.tasksDao.getById(task.id);
@@ -145,7 +151,7 @@ class DriftTaskRepository with RepositoryWrites implements TaskRepository {
         final bool newlyDone = s.isDone && !(old?.isDone ?? false);
         final Subtask row = s.copyWith(
           sortOrder: i,
-          completedAt: newlyDone ? moment : s.completedAt,
+          completedAt: newlyDone ? moment : (old?.completedAt ?? s.completedAt),
           clearCompletedAt: !s.isDone,
           createdAt: old?.createdAt ?? moment,
           updatedAt: moment,

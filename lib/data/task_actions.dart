@@ -19,13 +19,17 @@ class TaskActions {
 
   Future<void> updateTask(TaskItem task) => _repo.updateTask(task);
 
+  Future<void> updateTaskWithSubtasks(TaskItem task) =>
+      _repo.updateTaskWithSubtasks(task);
+
   Future<void> deleteTask(String id) => _repo.deleteTask(id);
 
   Future<void> setTaskDone(String id, bool isDone) =>
       _repo.setTaskDone(id, isDone);
 
-  Future<void> toggleTask(TaskItem task) =>
-      _repo.setTaskDone(task.id, !task.isDone);
+  Future<void> toggleTaskDone(String id) => _repo.toggleTaskDone(id);
+
+  Future<void> toggleTask(TaskItem task) => _repo.toggleTaskDone(task.id);
 
   Future<void> setSubtaskDone(
     String taskId,
@@ -49,6 +53,9 @@ class TaskActions {
     title: title,
     durationMinutes: durationMinutes,
   );
+
+  Future<void> updateSubtask(String taskId, Subtask subtask) =>
+      _repo.updateSubtask(taskId, subtask);
 
   Future<void> deleteSubtask(String taskId, String subtaskId) =>
       _repo.deleteSubtask(taskId, subtaskId);

@@ -1,5 +1,7 @@
 import '../../domain/models/task_item.dart';
 import '../../domain/task_filters.dart';
+import '../../domain/task_validator.dart';
+import '../../domain/validation_exception.dart';
 import '../db/database.dart' hide Subtask;
 import '../db/mappers.dart';
 import '../task_repository.dart';
@@ -60,6 +62,56 @@ mixin RepositoryWrites implements TaskRepository {
   }
 
   @override
+  Future<void> toggleTaskDone(String id) {
+    return db.transaction(() async {
+      final DateTime moment = now;
+      final TaskItem? current = await getById(id);
+      if (current == null) {
+        throw StateError('Task not found: $id');
+      }
+      if (current.hasSubtasks) {
+        final bool allDone = current.subtasks.every((Subtask s) => s.isDone);
+        final bool targetDone = !allDone;
+        await db.tasksDao.updateTask(
+          taskCompanionFromDomain(
+            current.copyWith(
+              isDone: targetDone,
+              completedAt: targetDone ? moment : null,
+              clearCompletedAt: !targetDone,
+              updatedAt: moment,
+            ),
+          ),
+        );
+        for (final Subtask s in current.subtasks) {
+          await db.subtasksDao.updateSubtask(
+            subtaskCompanionFromDomain(
+              s.copyWith(
+                isDone: targetDone,
+                completedAt: targetDone ? moment : null,
+                clearCompletedAt: !targetDone,
+                updatedAt: moment,
+              ),
+              id,
+            ),
+          );
+        }
+      } else {
+        final bool targetDone = !current.isDone;
+        await db.tasksDao.updateTask(
+          taskCompanionFromDomain(
+            current.copyWith(
+              isDone: targetDone,
+              completedAt: targetDone ? moment : null,
+              clearCompletedAt: !targetDone,
+              updatedAt: moment,
+            ),
+          ),
+        );
+      }
+    });
+  }
+
+  @override
   Future<void> setSubtaskDone(
     String taskId,
     String subtaskId,
@@ -101,12 +153,17 @@ mixin RepositoryWrites implements TaskRepository {
     String taskId, {
     required String title,
     int? durationMinutes,
-  }) {
+  }) async {
+    validateSubtaskTitle(title);
+    validateDuration(durationMinutes, 'Subtask duration');
     return db.transaction(() async {
       final DateTime moment = now;
       final TaskItem? current = await getById(taskId);
       if (current == null) {
         throw StateError('Task not found: $taskId');
+      }
+      if (current.subtasks.length >= 50) {
+        throw ValidationException('A task cannot have more than 50 subtasks');
       }
       int order = -1;
       for (final Subtask s in current.subtasks) {
@@ -131,7 +188,9 @@ mixin RepositoryWrites implements TaskRepository {
   }
 
   @override
-  Future<void> updateSubtask(String taskId, Subtask subtask) {
+  Future<void> updateSubtask(String taskId, Subtask subtask) async {
+    validateSubtaskTitle(subtask.title);
+    validateDuration(subtask.durationMinutes, 'Subtask duration');
     return db.transaction(() async {
       final DateTime moment = now;
       final TaskItem? current = await getById(taskId);

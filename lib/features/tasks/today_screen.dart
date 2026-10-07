@@ -9,6 +9,7 @@ import '../../../core/widgets/section_header.dart';
 import '../../../core/widgets/task_card.dart';
 import '../../../data/task_repository.dart';
 import '../../../domain/models/task_item.dart';
+import 'pending_delete_controller.dart';
 
 /// Extra bottom padding so list content clears the floating action button.
 const double _fabClearance = 88;
@@ -26,14 +27,20 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(pendingDeleteControllerProvider);
     final AsyncValue<List<TaskItem>> tasks = ref.watch(todayTasksProvider);
     return tasks.when(
-      data: (List<TaskItem> all) => _TodayList(
-        tasks: all,
-        showCompleted: _showCompleted,
-        onToggleCompleted: () =>
-            setState(() => _showCompleted = !_showCompleted),
-      ),
+      data: (List<TaskItem> all) {
+        final List<TaskItem> filtered = ref
+            .read(pendingDeleteControllerProvider.notifier)
+            .filterTaskList(all);
+        return _TodayList(
+          tasks: filtered,
+          showCompleted: _showCompleted,
+          onToggleCompleted: () =>
+              setState(() => _showCompleted = !_showCompleted),
+        );
+      },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (Object e, StackTrace st) => _TasksError(
         onRetry: () => ref.invalidate(taskListProvider),
@@ -80,7 +87,7 @@ class _TasksError extends StatelessWidget {
   }
 }
 
-class _TodayList extends StatelessWidget {
+class _TodayList extends ConsumerWidget {
   const _TodayList({
     required this.tasks,
     required this.showCompleted,
@@ -92,7 +99,7 @@ class _TodayList extends StatelessWidget {
   final VoidCallback onToggleCompleted;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final List<TaskItem> open =
         tasks.where((TaskItem t) => !t.isDone).toList();
     final List<TaskItem> done =
@@ -132,7 +139,29 @@ class _TodayList extends StatelessWidget {
                 Padding(
                   padding:
                       const EdgeInsets.only(bottom: AppSpace.x3),
-                  child: TaskCard(task: task),
+                  child: Dismissible(
+                    key: ValueKey<String>('task_${task.id}'),
+                    direction: DismissDirection.endToStart,
+                    background: Container(
+                      color: Theme.of(context).colorScheme.error,
+                      alignment: Alignment.centerRight,
+                      padding: const EdgeInsets.only(right: AppSpace.x4),
+                      child: const Icon(
+                        Icons.delete_outline,
+                        color: Colors.white,
+                      ),
+                    ),
+                    onDismissed: (_) {
+                      ref
+                          .read(pendingDeleteControllerProvider.notifier)
+                          .stageTaskDelete(
+                            context: context,
+                            ref: ref,
+                            taskId: task.id,
+                          );
+                    },
+                    child: TaskCard(task: task),
+                  ),
                 ),
               if (done.isNotEmpty) ...<Widget>[
                 const SizedBox(height: AppSpace.x2),
@@ -162,7 +191,34 @@ class _TodayList extends StatelessWidget {
                                 padding: const EdgeInsets.only(
                                   bottom: AppSpace.x3,
                                 ),
-                                child: TaskCard(task: task),
+                                child: Dismissible(
+                                  key: ValueKey<String>('task_${task.id}'),
+                                  direction: DismissDirection.endToStart,
+                                  background: Container(
+                                    color: Theme.of(context).colorScheme.error,
+                                    alignment: Alignment.centerRight,
+                                    padding: const EdgeInsets.only(
+                                      right: AppSpace.x4,
+                                    ),
+                                    child: const Icon(
+                                      Icons.delete_outline,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  onDismissed: (_) {
+                                    ref
+                                        .read(
+                                          pendingDeleteControllerProvider
+                                              .notifier,
+                                        )
+                                        .stageTaskDelete(
+                                          context: context,
+                                          ref: ref,
+                                          taskId: task.id,
+                                        );
+                                  },
+                                  child: TaskCard(task: task),
+                                ),
                               ),
                           ],
                         )

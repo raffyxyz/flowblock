@@ -124,8 +124,17 @@ class TimerController extends Notifier<ActiveTimer?> {
       }
       return;
     }
-    if (task.subtasks.every((Subtask s) => s.id != current.subtaskId)) {
-      stop();
+    if (current.subtaskId != null) {
+      Subtask? sub;
+      for (final Subtask s in task.subtasks) {
+        if (s.id == current.subtaskId) {
+          sub = s;
+          break;
+        }
+      }
+      if (sub == null || sub.isDone) {
+        stop();
+      }
     }
   }
 

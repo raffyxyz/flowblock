@@ -2,6 +2,7 @@ import 'package:drift/native.dart';
 import 'package:flowblock/data/db/database.dart' hide Subtask;
 import 'package:flowblock/data/repositories/drift_task_repository.dart';
 import 'package:flowblock/domain/models/task_item.dart';
+import 'package:flowblock/domain/validation_exception.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Repository business-rule tests (Step 3): parent auto-complete/re-open,
@@ -327,5 +328,139 @@ void main() {
       ],
     );
     expect(parent.displayEstimate, 10);
+  });
+
+  test('updateTaskWithSubtasks keeps ids and done state when title changes', () async {
+    await repo.addTask(
+      draft(
+        'Parent',
+        subs: const <Subtask>[
+          Subtask(id: 's1', title: 'Old Title 1', isDone: true),
+          Subtask(id: 's2', title: 'Old Title 2', isDone: false),
+        ],
+      ),
+    );
+    TaskItem task = await only();
+    final String s1Id = task.subtasks[0].id;
+    final String s2Id = task.subtasks[1].id;
+
+    final TaskItem updated = task.copyWith(
+      subtasks: <Subtask>[
+        task.subtasks[0].copyWith(title: 'New Title 1'),
+        task.subtasks[1].copyWith(title: 'New Title 2'),
+      ],
+    );
+
+    await repo.updateTaskWithSubtasks(updated);
+    task = (await repo.getById(task.id))!;
+    expect(task.subtasks[0].id, s1Id);
+    expect(task.subtasks[0].title, 'New Title 1');
+    expect(task.subtasks[0].isDone, isTrue);
+
+    expect(task.subtasks[1].id, s2Id);
+    expect(task.subtasks[1].title, 'New Title 2');
+    expect(task.subtasks[1].isDone, isFalse);
+  });
+
+  test('updateTaskWithSubtasks adds and deletes subtasks and reorders', () async {
+    await repo.addTask(
+      draft(
+        'Parent',
+        subs: const <Subtask>[
+          Subtask(id: 's1', title: 'Sub 1'),
+          Subtask(id: 's2', title: 'Sub 2'),
+        ],
+      ),
+    );
+    TaskItem task = await only();
+    final String s1Id = task.subtasks[0].id;
+
+    final TaskItem edited = task.copyWith(
+      subtasks: <Subtask>[
+        const Subtask(id: 'temp-new', title: 'Sub 3'),
+        task.subtasks[0],
+      ],
+    );
+
+    await repo.updateTaskWithSubtasks(edited);
+    task = (await repo.getById(task.id))!;
+    expect(task.subtasks, hasLength(2));
+    expect(task.subtasks[0].title, 'Sub 3');
+    expect(task.subtasks[0].sortOrder, 0);
+    expect(task.subtasks[1].id, s1Id);
+    expect(task.subtasks[1].sortOrder, 1);
+  });
+
+  test('bulk toggle via parent checkbox toggleTaskDone', () async {
+    await repo.addTask(
+      draft(
+        'Parent',
+        subs: const <Subtask>[
+          Subtask(id: 's1', title: 'Sub 1', isDone: true),
+          Subtask(id: 's2', title: 'Sub 2', isDone: false),
+        ],
+      ),
+    );
+    TaskItem task = await only();
+    expect(task.isDone, isFalse);
+
+    // Not all done -> mark all done
+    await repo.toggleTaskDone(task.id);
+    task = (await repo.getById(task.id))!;
+    expect(task.isDone, isTrue);
+    expect(task.subtasks.every((Subtask s) => s.isDone), isTrue);
+
+    // All done -> mark all open
+    await repo.toggleTaskDone(task.id);
+    task = (await repo.getById(task.id))!;
+    expect(task.isDone, isFalse);
+    expect(task.subtasks.every((Subtask s) => !s.isDone), isTrue);
+  });
+
+  test('validation limits reject invalid input and persist nothing', () async {
+    await expectLater(
+      repo.addTask(draft('   ')),
+      throwsA(isA<ValidationException>()),
+    );
+
+    await expectLater(
+      repo.addTask(draft('A' * 121)),
+      throwsA(isA<ValidationException>()),
+    );
+
+    await expectLater(
+      repo.addTask(
+        TaskItem(
+          id: 'test',
+          title: 'Valid',
+          notes: 'N' * 2001,
+          date: DateTime(2026, 1, 1),
+        ),
+      ),
+      throwsA(isA<ValidationException>()),
+    );
+
+    await expectLater(
+      repo.addTask(
+        TaskItem(
+          id: 'test',
+          title: 'Valid',
+          durationMinutes: 1000,
+          date: DateTime(2026, 1, 1),
+        ),
+      ),
+      throwsA(isA<ValidationException>()),
+    );
+
+    final List<Subtask> tooMany = <Subtask>[
+      for (int i = 0; i < 51; i++) Subtask(id: 's$i', title: 'Sub $i'),
+    ];
+    await expectLater(
+      repo.addTask(draft('Too Many', subs: tooMany)),
+      throwsA(isA<ValidationException>()),
+    );
+
+    final List<TaskItem> tasks = await repo.watchAll().first;
+    expect(tasks, isEmpty);
   });
 }
