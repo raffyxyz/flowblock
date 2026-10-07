@@ -7,17 +7,29 @@ environment:
   sdk: ^3.13.5
 
 dependencies:
+  drift: ^2.35.1
+  drift_flutter: ^0.3.1
   flutter:
     sdk: flutter
   flutter_riverpod: ^3.4.3
   go_router: ^18.0.2
   google_fonts: ^6.3.3
   intl: ^0.20.3
+  uuid: ^4.6.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  drift_dev: ^2.35.1
+  build_runner: ^2.16.1
+
+# Temporary pin: analyzer 14.5.0 (released Oct 2026) removed
+# AnalysisOptionsImpl.contextFeatures, which build_runner 2.16.1 still sets.
+# Pin to 14.4.0 until build_runner ships a fix. Not a new dependency, only
+# a transitive version cap. Remove once upstream is fixed.
+dependency_overrides:
+  analyzer: 14.4.0
 
 flutter:
   uses-material-design: true
