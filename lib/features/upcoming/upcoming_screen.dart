@@ -6,6 +6,7 @@ import '../../../core/widgets/empty_state.dart';
 import '../../../core/widgets/task_card.dart';
 import '../../../data/task_repository.dart';
 import '../../../domain/models/task_item.dart';
+import '../../../domain/task_filters.dart';
 
 /// Week strip plus the tasks scheduled on the selected day.
 class UpcomingScreen extends ConsumerStatefulWidget {
@@ -33,8 +34,7 @@ class _UpcomingScreenState extends ConsumerState<UpcomingScreen> {
     final List<DateTime> window = <DateTime>[
       for (int i = 0; i < 14; i++) today.add(Duration(days: i)),
     ];
-    final List<TaskItem> tasks =
-        tasksForDay(ref.watch(taskListProvider), _selected);
+    final AsyncValue<List<TaskItem>> all = ref.watch(taskListProvider);
 
     return Align(
       alignment: Alignment.topCenter,
@@ -87,34 +87,72 @@ class _UpcomingScreenState extends ConsumerState<UpcomingScreen> {
               ),
             ),
             Expanded(
-              child: tasks.isEmpty
-                  ? const EmptyState(
-                      icon: Icons.event_available_outlined,
-                      title: 'Nothing on this day',
-                      subtitle:
-                          'No tasks scheduled. Pick another day or add one with + on Today.',
-                    )
-                  : ListView(
-                      padding: const EdgeInsets.fromLTRB(
-                        AppSpace.x5,
-                        AppSpace.x3,
-                        AppSpace.x5,
-                        AppSpace.x6,
-                      ),
+              child: all.when(
+                data: (List<TaskItem> tasks) =>
+                    _DayList(tasks: tasksForDate(tasks, _selected)),
+                loading: () =>
+                    const Center(child: CircularProgressIndicator()),
+                error: (Object e, StackTrace st) => Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(AppSpace.x5),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
-                        for (final TaskItem task in tasks)
-                          Padding(
-                            padding: const EdgeInsets.only(
-                              bottom: AppSpace.x3,
-                            ),
-                            child: TaskCard(task: task),
-                          ),
+                        Text(
+                          'Could not load your tasks.',
+                          style: context.text.titleMedium,
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: AppSpace.x4),
+                        FilledButton(
+                          onPressed: () =>
+                              ref.invalidate(taskListProvider),
+                          child: const Text('Retry'),
+                        ),
                       ],
                     ),
+                  ),
+                ),
+              ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _DayList extends StatelessWidget {
+  const _DayList({required this.tasks});
+
+  final List<TaskItem> tasks;
+
+  @override
+  Widget build(BuildContext context) {
+    if (tasks.isEmpty) {
+      return const EmptyState(
+        icon: Icons.event_available_outlined,
+        title: 'Nothing on this day',
+        subtitle:
+            'No tasks scheduled. Pick another day or add one with + on Today.',
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpace.x5,
+        AppSpace.x3,
+        AppSpace.x5,
+        AppSpace.x6,
+      ),
+      children: <Widget>[
+        for (final TaskItem task in tasks)
+          Padding(
+            padding: const EdgeInsets.only(
+              bottom: AppSpace.x3,
+            ),
+            child: TaskCard(task: task),
+          ),
+      ],
     );
   }
 }

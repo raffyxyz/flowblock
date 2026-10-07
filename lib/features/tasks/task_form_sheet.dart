@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primary_button.dart';
 import '../../core/widgets/section_header.dart';
+import '../../data/task_actions.dart';
 import '../../data/task_repository.dart';
 import '../../domain/models/task_item.dart';
 import '../settings/settings_providers.dart';
@@ -135,6 +136,7 @@ class _TaskFormSheetState extends ConsumerState<TaskFormSheet> {
       weekdays: _weekdays,
       duration: _duration,
       drafts: _drafts,
+      newId: ref.read(idGeneratorProvider),
     );
     if (existing != null &&
         !existing.hasSubtasks &&
@@ -144,11 +146,22 @@ class _TaskFormSheetState extends ConsumerState<TaskFormSheet> {
         return;
       }
     }
-    final TaskListNotifier tasks = ref.read(taskListProvider.notifier);
-    if (existing == null) {
-      tasks.addTask(task);
-    } else {
-      tasks.updateTask(task);
+    final TaskActions actions = ref.read(taskActionsProvider);
+    try {
+      if (existing == null) {
+        await actions.addTask(task);
+      } else {
+        await actions.updateTask(task);
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not save the task. Please try again.'),
+          ),
+        );
+      }
+      return;
     }
     if (mounted) {
       context.pop();

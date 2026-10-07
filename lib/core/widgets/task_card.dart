@@ -6,7 +6,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/format.dart';
 import '../../../core/widgets/app_checkbox.dart';
 import '../../../core/widgets/duration_chip.dart';
-import '../../../data/task_repository.dart';
+import '../../../data/task_actions.dart';
 import '../../../domain/models/task_item.dart';
 import '../../../features/timer/timer_controller.dart';
 
@@ -41,9 +41,23 @@ class TaskCard extends ConsumerWidget {
                   semanticLabel: done
                       ? 'Mark ${task.title} as not done'
                       : 'Mark ${task.title} as done',
-                  onChanged: (_) => ref
-                      .read(taskListProvider.notifier)
-                      .toggleTask(task.id),
+                  onChanged: (_) async {
+                    try {
+                      await ref
+                          .read(taskActionsProvider)
+                          .toggleTask(task);
+                    } catch (_) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Could not update the task. Please try again.',
+                            ),
+                          ),
+                        );
+                      }
+                    }
+                  },
                 ),
                 const SizedBox(width: AppSpace.x3),
                 Expanded(

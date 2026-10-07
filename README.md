@@ -186,3 +186,86 @@ dart run drift_dev schema dump lib/data/db/database.dart drift_schemas/v1.json
   it clashes with the test matcher's `isNull`.
 - Test-only `.g.dart` naming: DAO parts (`tasks_dao.g.dart`, …) are standard
   Drift output; generated files are exempt from the ~300-line rule.
+
+## Step 3: Repository + Riverpod wiring (SQLite backs the UI)
+
+The UI now reads and writes real SQLite rows. Data survives restarts; the
+look and behavior are unchanged from Step 1.1.
+
+### Data flow
+
+```text
+widget -> TaskActions -> TaskRepository -> DAO -> SQLite
+              ^               (DriftTaskRepository)
+              |                watchAll / watchById (streams)
+              +-- taskListProvider (StreamProvider)
+              +-- taskProvider(id) (StreamProvider.family)
+              +-- todayTasksProvider (tasksForDate over taskListProvider)
+```
+
+Widgets never touch the database or DAOs: writes go through
+`taskActionsProvider` (failures surface as a `SnackBar`), reads come from
+the stream providers with loading (centered spinner), error (message +
+Retry via `ref.invalidate`), and data states. The detail screen keeps its
+"Task not found" state for deleted ids.
+
+### Final TaskRepository interface
+
+```dart
+abstract class TaskRepository {
+  Stream<List<TaskItem>> watchAll();
+  Stream<TaskItem?> watchById(String id);
+  Future<TaskItem?> getById(String id);
+  Future<void> addTask(TaskItem draft);
+  Future<void> updateTask(TaskItem task);
+  Future<void> deleteTask(String id);
+  Future<void> setTaskDone(String id, bool isDone);
+  Future<void> setSubtaskDone(String taskId, String subtaskId, bool isDone);
+  Future<void> addSubtask(String taskId,
+      {required String title, int? durationMinutes});
+  Future<void> updateSubtask(String taskId, Subtask subtask);
+  Future<void> deleteSubtask(String taskId, String subtaskId);
+  Future<void> reorderSubtasks(String taskId, List<String> orderedIds);
+  Future<void> reorderTasks(List<String> orderedIds);
+}
+```
+
+### Where each business rule lives
+
+- `lib/data/repositories/drift_task_repository.dart` (+
+  `repository_writes.dart` mixin): every write in **one** `db.transaction`;
+  parent recompute after any subtask change (last-open-checked completes,
+  any-uncheck re-opens, open-add re-opens a done parent, last-open-delete
+  completes, empty-subtasks leaves the parent alone); `createdAt` immutable,
+  `updatedAt` on every write; `sortOrder = max + 1` on insert, `0..n-1` on
+  reorder. Clock and ids come from `clockProvider` / `idGeneratorProvider`
+  (uuid v4 in production, fakes in tests).
+- `lib/domain/task_filters.dart`: pure `tasksForDate` (same-day match,
+  exactly the old mock behavior; TODO marks Step 5 recurrence expansion),
+  `findTask`, `findSubtask`, and the pure `recomputeParent` rule.
+- DAOs: unchanged pure data ops. Occurrence and timer-session DAOs are not
+  used in this step; completion lives on tasks/subtasks, so recurring tasks
+  do not reset subtasks yet.
+- `TimerController`: same 1-second ticker logic, but it subscribes to
+  `watchById` and stops when its task/subtask is deleted or when the first
+  subtask is added to its task-level timer. No `timer_sessions` writes yet.
+
+### Seeding
+
+The 8 sample tasks moved verbatim to `lib/data/seed/seed_data.dart`
+(`buildSeedTasks`, dates relative to today). `AppDatabase` gained a
+`seedOnCreate` flag (default false); `onCreate` inserts the seed when set.
+`appDatabaseProvider` passes `kDebugMode`, so a fresh debug install shows
+sample data once, while tests and release builds start empty.
+
+### Behavior differences from the mock
+
+None intended: toggles, inline add, edit-sheet save, delete, and subtask
+reorder behave as before and now persist across restarts. Two structural
+notes: (1) ids and timestamps are assigned by the repository (draft ids
+are ignored on add); the edit sheet preserves subtask ids across saves by
+matching titles. (2) `test/widget_test.dart` was removed; its 7 tests were
+ported to `test/data/repositories/drift_task_repository_test.dart`
+(repository-backed) and now run against SQLite. New tests: date-filter
+units, provider-override emission, atomicity (duplicate subtask ids roll
+back the whole update).

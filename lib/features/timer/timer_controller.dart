@@ -57,16 +57,28 @@ class ActiveTimer {
 
 class TimerController extends Notifier<ActiveTimer?> {
   Timer? _ticker;
+  StreamSubscription<TaskItem?>? _watchSub;
+
+  /// Latest task snapshot from the repository (for skip/next checks).
+  TaskItem? _watchedTask;
 
   @override
   ActiveTimer? build() {
-    ref.onDispose(() => _ticker?.cancel());
+    ref.onDispose(() {
+      _ticker?.cancel();
+      _watchSub?.cancel();
+    });
     return null;
   }
 
   /// Starts (or restarts) a session for [task], or for [subtask] within it.
   /// A task-level start is refused when the task has subtasks: timers live
-  /// on the subtasks. UI gates this too; this is the mock-layer backstop.
+  /// on the subtasks. UI gates this too; this is the controller backstop.
+  ///
+  /// The task is then watched by id: the timer stops if the task or the
+  /// timed subtask is deleted, or if the first subtask is added to a
+  /// task-level timer (the Step 1.1 rule). Nothing is written to
+  /// timer_sessions in this step.
   void start({required TaskItem task, Subtask? subtask}) {
     if (subtask == null && task.hasSubtasks) {
       return;
@@ -76,6 +88,8 @@ class TimerController extends Notifier<ActiveTimer?> {
         ref.read(defaultDurationProvider);
     final int total = (minutes * 60).clamp(60, 5999 * 60);
     _ticker?.cancel();
+    _watchSub?.cancel();
+    _watchedTask = task;
     state = ActiveTimer(
       taskId: task.id,
       subtaskId: subtask?.id,
@@ -87,6 +101,32 @@ class TimerController extends Notifier<ActiveTimer?> {
       isRunning: true,
     );
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+    _watchSub = ref
+        .read(taskRepositoryProvider)
+        .watchById(task.id)
+        .listen(_onTaskUpdate);
+  }
+
+  void _onTaskUpdate(TaskItem? task) {
+    final ActiveTimer? current = state;
+    if (current == null) {
+      return;
+    }
+    if (task == null) {
+      stop();
+      return;
+    }
+    _watchedTask = task;
+    if (current.subtaskId == null) {
+      // Task-level timer: stop when the first subtask appears.
+      if (task.hasSubtasks) {
+        stop();
+      }
+      return;
+    }
+    if (task.subtasks.every((Subtask s) => s.id != current.subtaskId)) {
+      stop();
+    }
   }
 
   void _tick() {
@@ -123,6 +163,9 @@ class TimerController extends Notifier<ActiveTimer?> {
   /// Stops the session and clears the mini timer bar.
   void stop() {
     _ticker?.cancel();
+    _watchSub?.cancel();
+    _watchSub = null;
+    _watchedTask = null;
     state = null;
   }
 
@@ -132,8 +175,7 @@ class TimerController extends Notifier<ActiveTimer?> {
     if (current == null) {
       return;
     }
-    final TaskItem? task =
-        findTask(ref.read(taskListProvider), current.taskId);
+    final TaskItem? task = _watchedTask;
     if (task == null) {
       stop();
       return;
@@ -154,8 +196,7 @@ final timerControllerProvider =
     NotifierProvider<TimerController, ActiveTimer?>(TimerController.new);
 
 /// Whether a further open subtask exists after the currently timed one.
-bool timerHasNext(ActiveTimer timer, List<TaskItem> tasks) {
-  final TaskItem? task = findTask(tasks, timer.taskId);
+bool timerHasNext(ActiveTimer timer, TaskItem? task) {
   if (task == null || task.subtasks.isEmpty) {
     return false;
   }

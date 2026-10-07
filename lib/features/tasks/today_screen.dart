@@ -26,7 +26,73 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final List<TaskItem> tasks = ref.watch(todayTasksProvider);
+    final AsyncValue<List<TaskItem>> tasks = ref.watch(todayTasksProvider);
+    return tasks.when(
+      data: (List<TaskItem> all) => _TodayList(
+        tasks: all,
+        showCompleted: _showCompleted,
+        onToggleCompleted: () =>
+            setState(() => _showCompleted = !_showCompleted),
+      ),
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (Object e, StackTrace st) => _TasksError(
+        onRetry: () => ref.invalidate(taskListProvider),
+      ),
+    );
+  }
+}
+
+class _TasksError extends StatelessWidget {
+  const _TasksError({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpace.x5),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              'Could not load your tasks.',
+              style: context.text.titleMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: AppSpace.x2),
+            Text(
+              'Check your storage and try again.',
+              style: context.text.bodyMedium?.copyWith(
+                color: context.colors.muted,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: AppSpace.x4),
+            FilledButton(
+              onPressed: onRetry,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TodayList extends StatelessWidget {
+  const _TodayList({
+    required this.tasks,
+    required this.showCompleted,
+    required this.onToggleCompleted,
+  });
+
+  final List<TaskItem> tasks;
+  final bool showCompleted;
+  final VoidCallback onToggleCompleted;
+
+  @override
+  Widget build(BuildContext context) {
     final List<TaskItem> open =
         tasks.where((TaskItem t) => !t.isDone).toList();
     final List<TaskItem> done =
@@ -75,12 +141,10 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
                   count: done.length,
                   trailing: IconButton(
                     tooltip:
-                        _showCompleted ? 'Hide completed' : 'Show completed',
-                    onPressed: () => setState(
-                      () => _showCompleted = !_showCompleted,
-                    ),
+                        showCompleted ? 'Hide completed' : 'Show completed',
+                    onPressed: onToggleCompleted,
                     icon: Icon(
-                      _showCompleted
+                      showCompleted
                           ? Icons.expand_less
                           : Icons.expand_more,
                     ),
@@ -90,7 +154,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
                 AnimatedSize(
                   duration: AppMotion.medium,
                   curve: Curves.easeOut,
-                  child: _showCompleted
+                  child: showCompleted
                       ? Column(
                           children: <Widget>[
                             for (final TaskItem task in done)

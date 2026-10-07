@@ -7,6 +7,7 @@ import 'daos/occurrences_dao.dart';
 import 'daos/subtasks_dao.dart';
 import 'daos/tasks_dao.dart';
 import 'daos/timer_sessions_dao.dart';
+import '../seed/seed_data.dart';
 import 'tables.dart';
 
 part 'database.g.dart';
@@ -27,14 +28,23 @@ part 'database.g.dart';
   daos: [TasksDao, SubtasksDao, OccurrencesDao, TimerSessionsDao],
 )
 class AppDatabase extends _$AppDatabase {
-  AppDatabase(super.executor);
+  AppDatabase(super.executor, {this.seedOnCreate = false});
+
+  /// When true, the debug seed tasks are inserted once in `onCreate`.
+  /// Production passes `kDebugMode`; tests and release builds start empty.
+  final bool seedOnCreate;
 
   @override
   int get schemaVersion => 1;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
-    onCreate: (Migrator m) async => m.createAll(),
+    onCreate: (Migrator m) async {
+      await m.createAll();
+      if (seedOnCreate) {
+        await seedDatabase(this);
+      }
+    },
     // Empty onUpgrade stub for future versions (v2+ migrations go here).
     onUpgrade: (Migrator m, int from, int to) async {},
     beforeOpen: (OpeningDetails details) async {

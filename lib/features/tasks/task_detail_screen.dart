@@ -3,21 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/theme/app_theme.dart';
-import '../../../core/utils/format.dart';
-import '../../../core/widgets/duration_chip.dart';
 import '../../../core/widgets/empty_state.dart';
-import '../../../core/widgets/info_chip.dart';
-import '../../../core/widgets/primary_button.dart';
-import '../../../core/widgets/section_header.dart';
-import '../../../core/widgets/subtask_tile.dart';
+import '../../../data/task_actions.dart';
 import '../../../data/task_repository.dart';
 import '../../../domain/models/task_item.dart';
-import '../timer/timer_controller.dart';
-import 'task_form_sheet.dart';
+import 'task_detail_body.dart';
 import 'task_timer_guard.dart';
 
 /// Full detail page for one task: meta info, reorderable subtasks,
-/// inline add, and an overflow menu (Edit / Delete, mock actions).
+/// inline add, and an overflow menu (Edit / Delete).
 class TaskDetailScreen extends ConsumerStatefulWidget {
   const TaskDetailScreen({super.key, required this.taskId});
 
@@ -36,6 +30,20 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
     super.dispose();
   }
 
+  Future<void> _run(Future<void> Function() op) async {
+    try {
+      await op();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Something went wrong. Please try again.'),
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _addSubtask(TaskItem task) async {
     final String title = _newSubtask.text.trim();
     if (title.isEmpty) {
@@ -47,11 +55,11 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
         return;
       }
     }
-    ref.read(taskListProvider.notifier).addSubtask(
-          task.id,
-          Subtask(id: newId(), title: title),
-        );
+    final String saved = title;
     _newSubtask.clear();
+    await _run(
+      () => ref.read(taskActionsProvider).addSubtask(task.id, title: saved),
+    );
   }
 
   Future<void> _confirmDelete(TaskItem task) async {
@@ -60,10 +68,7 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
       builder: (BuildContext dialogContext) {
         return AlertDialog(
           title: const Text('Delete task?'),
-          content: Text(
-            '“${task.title}” and its subtasks will be removed. '
-            'This is a mock action for now.',
-          ),
+          content: Text('“${task.title}” and its subtasks will be removed.'),
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -80,207 +85,88 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
     if (confirmed != true || !mounted) {
       return;
     }
-    ref.read(taskListProvider.notifier).deleteTask(task.id);
+    await _run(() => ref.read(taskActionsProvider).deleteTask(task.id));
     if (mounted) {
       context.pop();
     }
   }
 
+  void _reorder(TaskItem task, int oldIndex, int newIndex) {
+    final List<String> ids = <String>[
+      for (final Subtask s in task.subtasks) s.id,
+    ];
+    final String moved = ids.removeAt(oldIndex);
+    ids.insert(newIndex, moved);
+    _run(() => ref.read(taskActionsProvider).reorderSubtasks(task.id, ids));
+  }
+
   @override
   Widget build(BuildContext context) {
-    final TaskItem? task =
-        findTask(ref.watch(taskListProvider), widget.taskId);
-    if (task == null) {
-      return Scaffold(
-        appBar: AppBar(),
-        body: const EmptyState(
-          icon: Icons.search_off_outlined,
-          title: 'Task not found',
-          subtitle: 'It may have been deleted. Go back and pick another task.',
-        ),
-      );
-    }
-    final TaskListNotifier tasks = ref.read(taskListProvider.notifier);
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Details'),
-        actions: <Widget>[
-          PopupMenuButton<String>(
-            tooltip: 'Task options',
-            onSelected: (String value) {
-              if (value == 'edit') {
-                showTaskFormSheet(context, existing: task);
-              } else if (value == 'delete') {
-                _confirmDelete(task);
-              }
-            },
-            itemBuilder: (BuildContext context) =>
-                const <PopupMenuEntry<String>>[
-              PopupMenuItem<String>(
-                value: 'edit',
-                child: Row(
-                  children: <Widget>[
-                    Icon(Icons.edit_outlined),
-                    SizedBox(width: AppSpace.x3),
-                    Text('Edit'),
-                  ],
-                ),
-              ),
-              PopupMenuItem<String>(
-                value: 'delete',
-                child: Row(
-                  children: <Widget>[
-                    Icon(Icons.delete_outline),
-                    SizedBox(width: AppSpace.x3),
-                    Text('Delete'),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-      body: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: AppSpace.contentMax),
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpace.x5,
-              AppSpace.x2,
-              AppSpace.x5,
-              AppSpace.x8,
+    final AsyncValue<TaskItem?> task = ref.watch(taskProvider(widget.taskId));
+    return task.when(
+      data: (TaskItem? t) {
+        if (t == null) {
+          return Scaffold(
+            appBar: AppBar(),
+            body: const EmptyState(
+              icon: Icons.search_off_outlined,
+              title: 'Task not found',
+              subtitle:
+                  'It may have been deleted. Go back and pick another task.',
             ),
-            children: <Widget>[
-              Text(task.title, style: context.text.headlineMedium),
-              if (task.notes.isNotEmpty) ...<Widget>[
-                const SizedBox(height: AppSpace.x2),
-                Text(task.notes, style: context.text.bodyLarge),
-              ],
-              const SizedBox(height: AppSpace.x3),
-              Wrap(
-                spacing: AppSpace.x2,
-                runSpacing: AppSpace.x2,
-                children: <Widget>[
-                  InfoChip(
-                    icon: Icons.calendar_month_outlined,
-                    label: formatShortDay(task.date),
-                  ),
-                  if (task.time != null)
-                    InfoChip(
-                      icon: Icons.schedule,
-                      label: formatClock(task.time!),
-                    ),
-                  if (task.recurrence != RecurrenceType.once)
-                    InfoChip(
-                      icon: Icons.repeat,
-                      label: recurrenceLabel(task),
-                    ),
-                  if (task.displayEstimate != null)
-                    DurationChip(minutes: task.displayEstimate!),
-                ],
-              ),
-              const SizedBox(height: AppSpace.x5),
-              SectionHeader(
-                title: 'Subtasks',
-                count: task.hasSubtasks ? task.doneSubtasks : null,
-              ),
-              const SizedBox(height: AppSpace.x1),
-              if (!task.hasSubtasks)
-                Text(
-                  'Break it down into small steps.',
-                  style: context.text.bodyMedium?.copyWith(
-                    color: context.colors.muted,
-                  ),
-                )
-              else
-                ReorderableListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: task.subtasks.length,
-                  onReorderItem: (int oldIndex, int newIndex) {
-                    tasks.moveSubtask(task.id, oldIndex, newIndex);
-                  },
-                  itemBuilder: (BuildContext context, int index) {
-                    final Subtask subtask = task.subtasks[index];
-                    return SubtaskTile(
-                      key: ValueKey<String>(subtask.id),
-                      subtask: subtask,
-                      dragIndex: index,
-                      onToggled: (_) => tasks.toggleSubtask(
-                        task.id,
-                        subtask.id,
-                      ),
-                      onPlay: () {
-                        ref
-                            .read(timerControllerProvider.notifier)
-                            .start(task: task, subtask: subtask);
-                        context.push(
-                          Uri(
-                            path: '/timer',
-                            queryParameters: <String, String>{
-                              'taskId': task.id,
-                              'subtaskId': subtask.id,
-                            },
-                          ).toString(),
-                        );
-                      },
-                    );
-                  },
-                ),
-              const SizedBox(height: AppSpace.x2),
-              Row(
-                children: <Widget>[
-                  Expanded(
-                    child: TextField(
-                      controller: _newSubtask,
-                      textInputAction: TextInputAction.done,
-                      onSubmitted: (_) => _addSubtask(task),
-                      decoration: const InputDecoration(
-                        hintText: 'Add subtask',
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: AppSpace.x2),
-                  IconButton.filled(
-                    tooltip: 'Add subtask',
-                    onPressed: () => _addSubtask(task),
-                    icon: const Icon(Icons.add),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpace.x6),
-              PrimaryButton(
-                label: 'Start focus session',
-                icon: Icons.play_arrow,
-                onPressed: task.canRunOwnTimer
-                    ? () {
-                        ref
-                            .read(timerControllerProvider.notifier)
-                            .start(task: task);
-                        context.push(
-                          Uri(
-                            path: '/timer',
-                            queryParameters: <String, String>{
-                              'taskId': task.id,
-                            },
-                          ).toString(),
-                        );
-                      }
-                    : null,
-              ),
-              if (!task.canRunOwnTimer) ...<Widget>[
-                const SizedBox(height: AppSpace.x2),
-                Text(
-                  'Timers are set on subtasks',
-                  style: context.text.bodySmall?.copyWith(
-                    color: context.colors.muted,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ],
-          ),
+          );
+        }
+        return TaskDetailBody(
+          task: t,
+          newSubtask: _newSubtask,
+          onAddSubtask: () => _addSubtask(t),
+          onReorder: (int o, int n) => _reorder(t, o, n),
+          onDelete: () => _confirmDelete(t),
+          onRun: _run,
+        );
+      },
+      loading: () =>
+          Scaffold(appBar: AppBar(), body: const _LoadingBody()),
+      error: (Object e, StackTrace st) => Scaffold(
+        appBar: AppBar(),
+        body: _ErrorBody(
+          onRetry: () => ref.invalidate(taskProvider(widget.taskId)),
+        ),
+      ),
+    );
+  }
+}
+
+class _LoadingBody extends StatelessWidget {
+  const _LoadingBody();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(child: CircularProgressIndicator());
+  }
+}
+
+class _ErrorBody extends StatelessWidget {
+  const _ErrorBody({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpace.x5),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              'Could not load this task.',
+              style: context.text.titleMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: AppSpace.x4),
+            FilledButton(onPressed: onRetry, child: const Text('Retry')),
+          ],
         ),
       ),
     );
