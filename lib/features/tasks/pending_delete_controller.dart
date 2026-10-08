@@ -1,8 +1,7 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/widgets/root_messenger.dart';
 import '../../data/task_repository.dart';
 import '../../domain/models/task_item.dart';
 import '../../domain/task_filters.dart';
@@ -30,7 +29,6 @@ class PendingDeleteState {
 
 class PendingDeleteController extends Notifier<PendingDeleteState>
     with WidgetsBindingObserver {
-  final Map<String, Timer> _pendingTimers = <String, Timer>{};
   final Map<String, Future<void> Function()> _pendingCommits =
       <String, Future<void> Function()>{};
 
@@ -39,7 +37,6 @@ class PendingDeleteController extends Notifier<PendingDeleteState>
     WidgetsBinding.instance.addObserver(this);
     ref.onDispose(() {
       WidgetsBinding.instance.removeObserver(this);
-      commitAll();
     });
     return const PendingDeleteState();
   }
@@ -47,10 +44,14 @@ class PendingDeleteController extends Notifier<PendingDeleteState>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive ||
         state == AppLifecycleState.detached) {
       commitAll();
     }
+  }
+
+  ScaffoldMessengerState _messenger(BuildContext context) {
+    return rootScaffoldMessengerKey.currentState ??
+        ScaffoldMessenger.of(context);
   }
 
   void _stopTimerIfAffected(dynamic ref, String taskId, [String? subtaskId]) {
@@ -62,13 +63,25 @@ class PendingDeleteController extends Notifier<PendingDeleteState>
     }
   }
 
-  void _cancelPendingKey(String key) {
-    _pendingTimers.remove(key)?.cancel();
-    _pendingCommits.remove(key);
+  void _commitKey(String key) {
+    final Future<void> Function()? fn = _pendingCommits[key];
+    if (fn != null) {
+      fn();
+    }
+  }
+
+  void _commitAllExcept(String exceptKey) {
+    final List<String> keys = _pendingCommits.keys
+        .where((String k) => k != exceptKey)
+        .toList();
+    for (final String k in keys) {
+      _commitKey(k);
+    }
   }
 
   /// Stages a subtask deletion. Disappears from UI immediately.
-  /// Commits after 4 seconds or on pause/dispose. Undo cancels the delete.
+  /// Commits when its SnackBar closes without Undo, on paused/detached,
+  /// or when another delete starts. Never on dispose/inactive/hidden.
   void stageSubtaskDelete({
     required BuildContext context,
     required dynamic ref,
@@ -78,52 +91,63 @@ class PendingDeleteController extends Notifier<PendingDeleteState>
     _stopTimerIfAffected(ref, taskId, subtaskId);
 
     final String key = 'subtask_${taskId}_$subtaskId';
-    _cancelPendingKey(key);
+    _commitAllExcept(key);
+    _pendingCommits.remove(key);
 
     final Set<String> currentSubs =
         Set<String>.from(state.pendingSubtasks[taskId] ?? <String>{});
     currentSubs.add(subtaskId);
-
     final Map<String, Set<String>> nextMap =
         Map<String, Set<String>>.from(state.pendingSubtasks);
     nextMap[taskId] = currentSubs;
     state = state.copyWith(pendingSubtasks: nextMap);
 
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
-    messenger.hideCurrentSnackBar();
+    final ScaffoldMessengerState messenger = _messenger(context);
 
     Future<void> commit() async {
-      _cancelPendingKey(key);
+      if (!_pendingCommits.containsKey(key)) {
+        return;
+      }
+      _pendingCommits.remove(key);
       _removePendingSubtask(taskId, subtaskId);
-      await ref.read(taskRepositoryProvider).deleteSubtask(taskId, subtaskId);
+      try {
+        await this.ref.read(taskRepositoryProvider).deleteSubtask(
+          taskId,
+          subtaskId,
+        );
+      } catch (_) {
+        // Already gone (race with Undo/commit): safe no-op.
+      }
     }
 
     _pendingCommits[key] = commit;
 
-    final Timer timer = Timer(const Duration(seconds: 4), () async {
-      messenger.hideCurrentSnackBar();
-      await commit();
+    final ScaffoldFeatureController<SnackBar, SnackBarClosedReason> handle =
+        messenger.showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 4),
+            persist: false,
+            content: const Text('Subtask deleted'),
+            action: SnackBarAction(
+              label: 'Undo',
+              onPressed: () {
+                undoSubtaskDelete(taskId, subtaskId);
+                messenger.hideCurrentSnackBar(
+                  reason: SnackBarClosedReason.action,
+                );
+              },
+            ),
+          ),
+        );
+    handle.closed.then((SnackBarClosedReason reason) {
+      if (reason != SnackBarClosedReason.action) {
+        _commitKey(key);
+      }
     });
-    _pendingTimers[key] = timer;
-
-    messenger.showSnackBar(
-      SnackBar(
-        duration: const Duration(seconds: 4),
-        content: const Text('Subtask deleted'),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () {
-            _cancelPendingKey(key);
-            _removePendingSubtask(taskId, subtaskId);
-            messenger.hideCurrentSnackBar();
-          },
-        ),
-      ),
-    );
   }
 
   /// Stages a task deletion. Disappears from UI immediately.
-  /// Commits after 4 seconds or on pause/dispose. Undo cancels the delete.
+  /// Same commit rules as [stageSubtaskDelete].
   void stageTaskDelete({
     required BuildContext context,
     required dynamic ref,
@@ -132,50 +156,72 @@ class PendingDeleteController extends Notifier<PendingDeleteState>
     _stopTimerIfAffected(ref, taskId);
 
     final String key = 'task_$taskId';
-    _cancelPendingKey(key);
+    _commitAllExcept(key);
+    _pendingCommits.remove(key);
 
     final Set<String> nextTasks = Set<String>.from(state.pendingTaskIds)
       ..add(taskId);
     state = state.copyWith(pendingTaskIds: nextTasks);
 
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
-    messenger.hideCurrentSnackBar();
+    final ScaffoldMessengerState messenger = _messenger(context);
 
     Future<void> commit() async {
-      _cancelPendingKey(key);
+      if (!_pendingCommits.containsKey(key)) {
+        return;
+      }
+      _pendingCommits.remove(key);
       _removePendingTask(taskId);
-      await ref.read(taskRepositoryProvider).deleteTask(taskId);
+      try {
+        await this.ref.read(taskRepositoryProvider).deleteTask(taskId);
+      } catch (_) {
+        // Already gone (race with Undo/commit): safe no-op.
+      }
     }
 
     _pendingCommits[key] = commit;
 
-    final Timer timer = Timer(const Duration(seconds: 4), () async {
-      messenger.hideCurrentSnackBar();
-      await commit();
+    final ScaffoldFeatureController<SnackBar, SnackBarClosedReason> handle =
+        messenger.showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 4),
+            persist: false,
+            content: const Text('Task deleted'),
+            action: SnackBarAction(
+              label: 'Undo',
+              onPressed: () {
+                undoTaskDelete(taskId);
+                messenger.hideCurrentSnackBar(
+                  reason: SnackBarClosedReason.action,
+                );
+              },
+            ),
+          ),
+        );
+    handle.closed.then((SnackBarClosedReason reason) {
+      if (reason != SnackBarClosedReason.action) {
+        _commitKey(key);
+      }
     });
-    _pendingTimers[key] = timer;
+  }
 
-    messenger.showSnackBar(
-      SnackBar(
-        duration: const Duration(seconds: 4),
-        content: const Text('Task deleted'),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () {
-            _cancelPendingKey(key);
-            _removePendingTask(taskId);
-            messenger.hideCurrentSnackBar();
-          },
-        ),
-      ),
-    );
+  /// Cancels a pending task delete. Zero database calls; safe after commit.
+  void undoTaskDelete(String taskId) {
+    _pendingCommits.remove('task_$taskId');
+    _removePendingTask(taskId);
+  }
+
+  /// Cancels a pending subtask delete. Zero database calls; safe after commit.
+  void undoSubtaskDelete(String taskId, String subtaskId) {
+    _pendingCommits.remove('subtask_${taskId}_$subtaskId');
+    _removePendingSubtask(taskId, subtaskId);
   }
 
   void _removePendingSubtask(String taskId, String subtaskId) {
     final Set<String> currentSubs =
         Set<String>.from(state.pendingSubtasks[taskId] ?? <String>{});
-    currentSubs.remove(subtaskId);
-
+    if (!currentSubs.remove(subtaskId)) {
+      return;
+    }
     final Map<String, Set<String>> nextMap =
         Map<String, Set<String>>.from(state.pendingSubtasks);
     if (currentSubs.isEmpty) {
@@ -187,27 +233,23 @@ class PendingDeleteController extends Notifier<PendingDeleteState>
   }
 
   void _removePendingTask(String taskId) {
+    if (!state.pendingTaskIds.contains(taskId)) {
+      return;
+    }
     final Set<String> nextTasks = Set<String>.from(state.pendingTaskIds)
       ..remove(taskId);
     state = state.copyWith(pendingTaskIds: nextTasks);
   }
 
-  /// Immediately commits all pending deletes (e.g. app backgrounded or screen disposed).
+  /// Commits all pending deletes (paused/detached or superseded).
   void commitAll() {
-    final List<Timer> timers = _pendingTimers.values.toList();
-    _pendingTimers.clear();
-    for (final Timer t in timers) {
-      t.cancel();
-    }
-    final List<Future<void> Function()> callbacks =
-        _pendingCommits.values.toList();
-    _pendingCommits.clear();
-    for (final Future<void> Function() cb in callbacks) {
-      cb();
+    final List<String> keys = _pendingCommits.keys.toList();
+    for (final String k in keys) {
+      _commitKey(k);
     }
   }
 
-  /// Filters a single task, hiding pending deleted subtasks and recomputing parent state.
+  /// Filters a single task, hiding pending deleted subtasks and recomputing.
   /// Returns null if the task itself is pending deleted.
   TaskItem? filterTask(TaskItem? task) {
     if (task == null || state.pendingTaskIds.contains(task.id)) {
